@@ -93,7 +93,7 @@ jobs:
             printf "| service |"
             for a in "${archs[@]}"; do printf " %s |" "$a"; done
             printf "\n|---|"
-            for _ in "${archs[@]}"; do printf "---|"; done
+            for _ in "${archs[@]}"; do printf '%s' "---|"; done
             printf "\n"
 
             for svc in "${services[@]}"; do
