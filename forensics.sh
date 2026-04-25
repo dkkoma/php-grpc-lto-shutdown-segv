@@ -19,8 +19,7 @@
 # -flto=auto and ships gdb (other -lto* targets do not have gdb installed).
 #
 # Env:
-#   N=NNN              maximum number of attempts (default 2000)
-#   GRPC_TARGET=host:port   gRPC endpoint for grpc_call.php (default spanner-emulator:9010)
+#   N=NNN   maximum number of attempts (default 2000)
 
 set -eu
 
@@ -34,43 +33,48 @@ if ! command -v gdb >/dev/null 2>&1; then
     exit 2
 fi
 
+# Canonical post-mortem query script. Written once; -x'd by gdb each iteration.
+gdb_script="$(mktemp)"
+cat > "$gdb_script" <<'GDB'
+set pagination off
+set confirm off
+handle SIGPIPE nostop noprint pass
+handle SIGTERM nostop noprint pass
+run
+printf "\n=== info threads ===\n"
+info threads
+printf "\n=== thread apply all bt ===\n"
+thread apply all bt
+printf "\n=== info sharedlibrary ===\n"
+info sharedlibrary
+printf "\n=== info proc mappings ===\n"
+info proc mappings
+printf "\n=== info registers ===\n"
+info registers
+printf "\n=== x/10i $pc ===\n"
+x/10i $pc
+GDB
+
 i=0
 while [ "$i" -lt "$maxruns" ]; do
-    out="$(
-        gdb -batch -nx -q \
-            -ex "set pagination off" \
-            -ex "set confirm off" \
-            -ex "handle SIGPIPE nostop noprint pass" \
-            -ex "handle SIGTERM nostop noprint pass" \
-            -ex "run" \
-            -ex "printf \"\\n=== info threads ===\\n\"" \
-            -ex "info threads" \
-            -ex "printf \"\\n=== thread apply all bt ===\\n\"" \
-            -ex "thread apply all bt" \
-            -ex "printf \"\\n=== info sharedlibrary ===\\n\"" \
-            -ex "info sharedlibrary" \
-            -ex "printf \"\\n=== info proc mappings ===\\n\"" \
-            -ex "info proc mappings" \
-            -ex "printf \"\\n=== info registers ===\\n\"" \
-            -ex "info registers" \
-            -ex "printf \"\\n=== x/10i \\$pc ===\\n\"" \
-            -ex "x/10i \$pc" \
+    out="$(gdb -batch -nx -q -x "$gdb_script" \
             --args "$target_php" -n \
                 -d display_errors=0 -d log_errors=On \
                 -d extension=grpc \
                 -d grpc.grpc_verbosity=ERROR \
                 -d grpc.enable_fork_support=0 \
-                "$script" 2>&1
-    )"
+                "$script" 2>&1 || true)"
 
     if printf '%s' "$out" | grep -q "Program received signal SIGSEGV"; then
         echo "=== SIGSEGV captured on iteration $i ==="
         printf '%s\n' "$out"
+        rm -f "$gdb_script"
         exit 0
     fi
 
     i=$((i + 1))
 done
 
+rm -f "$gdb_script"
 echo "forensics.sh: no SIGSEGV captured in $maxruns runs" >&2
 exit 2
