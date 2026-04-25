@@ -59,6 +59,12 @@ jobs:
 
       - name: Build ${{ matrix.service }}
         uses: docker/build-push-action@v6
+        env:
+          # build-push-action v6 otherwise auto-uploads a per-job
+          # `*.dockerbuild` summary artifact (~MB each); 18 of them break
+          # the summary job's download-artifact step.
+          DOCKER_BUILD_SUMMARY: false
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           target: ${{ matrix.service }}
@@ -96,6 +102,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          # Only the result-matrix artifacts uploaded above; skip anything
+          # else (e.g. build-push-action's auto `*.dockerbuild` summaries).
+          pattern: 'ubuntu-*__php85-*'
 
       - name: Render result matrix to step summary
         run: |
