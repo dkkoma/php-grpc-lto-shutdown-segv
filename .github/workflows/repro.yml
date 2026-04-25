@@ -3,7 +3,17 @@ name: repro
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'LICENSE'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'LICENSE'
   workflow_dispatch:
     inputs:
       n:
@@ -12,6 +22,15 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin the compose project name so the image tag we pre-build with buildx
+  # (`repro-<service>:latest`) matches what `docker compose run` looks up.
+  COMPOSE_PROJECT_NAME: repro
 
 jobs:
   reproduce:
@@ -36,15 +55,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: docker/setup-buildx-action@v3
+
       - name: Build ${{ matrix.service }}
-        run: docker compose build ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.service }}
+          tags: repro-${{ matrix.service }}:latest
+          load: true
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.os }}
+          cache-to: type=gha,scope=${{ matrix.service }}-${{ matrix.os }},mode=max
 
       - name: Run ${{ matrix.service }}
         env:
           N: ${{ github.event.inputs.n || '200' }}
         run: |
           set -o pipefail
-          docker compose run --rm -e N=$N ${{ matrix.service }} | tee out.log
+          docker compose run --rm --no-build -e N=$N ${{ matrix.service }} | tee out.log
           tail -n1 out.log > result.txt
 
       - name: Upload result
