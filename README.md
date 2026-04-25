@@ -191,7 +191,7 @@ NOTES-style table to the run's `$GITHUB_STEP_SUMMARY`:
 | ...                            | ...              | ...             |
 ```
 
-Trigger via `workflow_dispatch` or push/PR. Default `N=200` per cell;
+Trigger via `workflow_dispatch` or push/PR. Default `N=1000` per cell;
 pass `n` as input to override.
 
 ## Status / scope

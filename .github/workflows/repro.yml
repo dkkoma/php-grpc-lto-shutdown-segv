@@ -18,7 +18,7 @@ on:
     inputs:
       n:
         description: iterations per service per arch
-        default: "200"
+        default: "1000"
 
 permissions:
   contents: read
@@ -75,7 +75,7 @@ jobs:
 
       - name: Run ${{ matrix.service }}
         env:
-          N: ${{ github.event.inputs.n || '200' }}
+          N: ${{ github.event.inputs.n || '1000' }}
         run: |
           set -o pipefail
           docker compose run --rm -e N=$N ${{ matrix.service }} | tee out.log
