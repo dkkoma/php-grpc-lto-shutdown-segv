@@ -1,0 +1,98 @@
+# Standalone compose for reproducing the PHP ext-grpc shutdown SIGSEGV
+# when the extension is built with -flto=auto.
+#
+# Each service builds grpc with a different combination of flags / patches
+# and runs loop.sh to count SIGSEGV vs clean exits at process shutdown.
+# spanner-emulator is just used as a convenient gRPC endpoint to send one
+# real unary call to.
+#
+# Usage:
+#   docker compose run --rm php85-debian            # baseline – stock pecl install (0%)
+#   docker compose run --rm -e N=500 php85-ltoonly  # -flto=auto only (~30%)
+#   docker compose run --rm -e N=500 php85-nolto    # control – flags minus LTO (0%)
+#   docker compose run --rm -e N=2000 php85-lto-nodelete  # workaround (0%)
+
+x-repro-common: &repro-common
+  entrypoint: /repro/loop.sh
+  depends_on:
+    - spanner-emulator
+  environment:
+    GRPC_TARGET: spanner-emulator:9010
+  volumes:
+    - .:/repro:ro
+
+services:
+  # Baseline – stock pecl install, no extra flags.
+  php85-debian:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-debian
+
+  # Optimization-flag bisection.
+  php85-lto:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-lto
+
+  php85-nolto:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-nolto
+
+  php85-ltoonly:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-ltoonly
+
+  # Source-patch experiments on top of LTO build.
+  php85-lto-shutdownblocking:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-lto-shutdownblocking
+
+  php85-lto-waitforasync:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-lto-waitforasync
+
+  php85-lto-shutdownee:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-lto-shutdownee
+
+  php85-lto-shutdownee-stalled:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-lto-shutdownee-stalled
+
+  php85-lto-nodelete:
+    <<: *repro-common
+    build:
+      context: .
+      target: php85-lto-nodelete
+
+  # Same -flto=auto build as php85-ltoonly, but ships gdb and runs the
+  # repro under gdb in batch mode to dump threads / backtraces / proc
+  # mappings / sharedlibrary list when a SIGSEGV is caught.
+  #
+  #   docker compose run --rm php85-lto-forensics
+  #
+  # The captured output is what NOTES.md's "gdb forensics" section
+  # describes; this service lets anyone re-run that capture.
+  php85-lto-forensics:
+    <<: *repro-common
+    entrypoint: /repro/forensics.sh
+    build:
+      context: .
+      target: php85-lto-forensics
+
+  spanner-emulator:
+    image: gcr.io/cloud-spanner-emulator/emulator

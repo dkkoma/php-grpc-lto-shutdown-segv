@@ -1,0 +1,118 @@
+name: repro
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: iterations per service per arch
+        default: "200"
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    name: ${{ matrix.os }} / ${{ matrix.service }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest        # GitHub-hosted x86_64
+          - ubuntu-24.04-arm     # GitHub-hosted aarch64
+        service:
+          - php85-debian
+          - php85-lto
+          - php85-nolto
+          - php85-ltoonly
+          - php85-lto-shutdownblocking
+          - php85-lto-waitforasync
+          - php85-lto-shutdownee
+          - php85-lto-shutdownee-stalled
+          - php85-lto-nodelete
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service }}
+        run: docker compose build ${{ matrix.service }}
+
+      - name: Run ${{ matrix.service }}
+        env:
+          N: ${{ github.event.inputs.n || '200' }}
+        run: |
+          set -o pipefail
+          docker compose run --rm -e N=$N ${{ matrix.service }} | tee out.log
+          tail -n1 out.log > result.txt
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}__${{ matrix.service }}
+          path: result.txt
+          if-no-files-found: ignore
+
+      - name: Tear down compose
+        if: always()
+        run: docker compose down -v
+
+  summary:
+    name: result matrix
+    needs: reproduce
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Render result matrix to step summary
+        run: |
+          services=(
+            php85-debian
+            php85-lto
+            php85-nolto
+            php85-ltoonly
+            php85-lto-shutdownblocking
+            php85-lto-waitforasync
+            php85-lto-shutdownee
+            php85-lto-shutdownee-stalled
+            php85-lto-nodelete
+          )
+          oses=(ubuntu-latest ubuntu-24.04-arm)
+          archs=(x86_64 aarch64)
+
+          {
+            echo "## Repro result matrix"
+            echo
+            echo "Each cell is \`segv / N (rate)\`. \`(failed)\` means the job did not produce a result."
+            echo
+            printf "| service |"
+            for a in "${archs[@]}"; do printf " %s |" "$a"; done
+            printf "\n|---|"
+            for _ in "${archs[@]}"; do printf "---|"; done
+            printf "\n"
+
+            for svc in "${services[@]}"; do
+              printf "| %s" "$svc"
+              for i in "${!oses[@]}"; do
+                os="${oses[$i]}"
+                f="artifacts/${os}__${svc}/result.txt"
+                cell="(failed)"
+                if [ -f "$f" ]; then
+                  line="$(cat "$f")"
+                  n="$(printf '%s' "$line" | sed -n 's/.*N=\([0-9]*\).*/\1/p')"
+                  segv="$(printf '%s' "$line" | sed -n 's/.*segv=\([0-9]*\).*/\1/p')"
+                  if [ -n "$n" ] && [ -n "$segv" ] && [ "$n" -gt 0 ]; then
+                    rate="$(awk -v s="$segv" -v n="$n" 'BEGIN{printf "%.1f%%", s*100/n}')"
+                    cell="${segv} / ${n} (${rate})"
+                  fi
+                fi
+                printf " | %s" "$cell"
+              done
+              printf " |\n"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
