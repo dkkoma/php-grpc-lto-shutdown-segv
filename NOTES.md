@@ -171,22 +171,27 @@ whatever instruction the worker fetches next is still valid code.
 
 ## Why LTO and not the other flags
 
-LTO (whole-program optimization) is the only flag in the set that:
+We don't have a direct proof of the precise mechanism, but the
+evidence is consistent with `-flto=auto` changing teardown ordering or
+lifetime timing inside grpc.so. Among the flags in the bisected set,
+LTO is the only one that *could* plausibly do this — whole-program
+optimization can in principle:
 
-- can change the order in which static initializers run,
-- can change the order in which `__cxa_atexit` callbacks register and
+- change the order in which static initializers run,
+- change the order in which `__cxa_atexit` callbacks register and
   fire,
-- can fuse symbols across translation-unit boundaries and prune /
-  inline destructors that the gRPC C-core relies on running in a
-  specific order,
-- can change which symbols become hidden / locally-bound by the LTO
+- fuse symbols across translation-unit boundaries and prune / inline
+  destructors that the gRPC C-core relies on running in a specific
+  order,
+- change which symbols become hidden / locally-bound by the LTO
   linker.
 
-The other flags are codegen-time only (or scope-of-visibility only)
-and can't reorder cleanup callbacks. Empirically, removing `-flto=auto`
-from the same `make` invocation that otherwise has `-O3
--fno-semantic-interposition -march=native` is enough to drop SEGV from
-40% → 0%.
+The other flags in the set are codegen-time only (or
+scope-of-visibility only) and shouldn't be able to reorder cleanup
+callbacks. Empirically, removing `-flto=auto` from the same `make`
+invocation that otherwise has `-O3 -fno-semantic-interposition
+-march=native` is enough to drop SEGV from 40% → 0%, which is what
+points the finger at LTO even without a confirmed mechanism.
 
 ## Architecture sensitivity (anecdotal)
 

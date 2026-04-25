@@ -129,13 +129,17 @@ investigation. The headline numbers on Apple Silicon arm64 / OrbStack:
 
 ## Root cause
 
-LTO (whole-program optimization) reorders / merges static initialisers
-and `__cxa_atexit` registrations across translation units. In the
-resulting grpc.so, some background-worker tear-down does not finish by
-the time `PHP_MSHUTDOWN_FUNCTION(grpc)` returns. PHP then calls
-`dlclose(grpc.so)`; the dynamic linker drops the refcount, the lib gets
-`munmap`'d at `dl_fini`, and any thread still executing grpc.so code at
-that instant takes a SIGSEGV with `RIP` in unmapped memory.
+The evidence is consistent with `-flto=auto` changing teardown ordering
+or lifetime timing inside grpc.so — whole-program optimization can in
+principle reorder / merge static initialisers and `__cxa_atexit`
+registrations across translation units, prune or inline destructors,
+and change symbol visibility. We have not pinned down the specific
+mechanism, but empirically: with LTO some background-worker tear-down
+does not finish by the time `PHP_MSHUTDOWN_FUNCTION(grpc)` returns. PHP
+then calls `dlclose(grpc.so)`; the dynamic linker drops the refcount,
+the lib gets `munmap`'d at `dl_fini`, and any thread still executing
+grpc.so code at that instant takes a SIGSEGV with `RIP` in unmapped
+memory.
 
 `grpc_shutdown()` /`grpc_shutdown_blocking()` /
 `grpc_maybe_wait_for_async_shutdown()` all complete cleanly without
