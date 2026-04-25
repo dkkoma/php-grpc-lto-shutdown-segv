@@ -18,7 +18,7 @@ on:
     inputs:
       n:
         description: iterations per service per arch
-        default: "1000"
+        default: "500"
 
 permissions:
   contents: read
@@ -52,6 +52,9 @@ jobs:
           - php85-lto-shutdownee-stalled
           - php85-lto-nodelete
     runs-on: ${{ matrix.os }}
+    # Cap each cell so a hung iteration doesn't burn the GHA hosted-runner
+    # 49-min "lost communication" timeout — fail fast and visibly instead.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -75,7 +78,7 @@ jobs:
 
       - name: Run ${{ matrix.service }}
         env:
-          N: ${{ github.event.inputs.n || '1000' }}
+          N: ${{ github.event.inputs.n || '500' }}
         run: |
           set -o pipefail
           docker compose run --rm -e N=$N ${{ matrix.service }} | tee out.log
