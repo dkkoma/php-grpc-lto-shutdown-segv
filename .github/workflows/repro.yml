@@ -72,7 +72,7 @@ jobs:
           N: ${{ github.event.inputs.n || '200' }}
         run: |
           set -o pipefail
-          docker compose run --rm --no-build -e N=$N ${{ matrix.service }} | tee out.log
+          docker compose run --rm -e N=$N ${{ matrix.service }} | tee out.log
           tail -n1 out.log > result.txt
 
       - name: Upload result
