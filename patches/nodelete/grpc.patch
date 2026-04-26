@@ -1,0 +1,29 @@
+--- a/config.m4
++++ b/config.m4
+@@ -981,6 +981,7 @@
+     src/php/ext/grpc/channel_credentials.c \
+     src/php/ext/grpc/completion_queue.c \
+     src/php/ext/grpc/php_grpc.c \
++    src/php/ext/grpc/php_grpc_pin_self.c \
+     src/php/ext/grpc/server.c \
+     src/php/ext/grpc/server_credentials.c \
+     src/php/ext/grpc/timeval.c \
+--- a/src/php/ext/grpc/php_grpc.c
++++ b/src/php/ext/grpc/php_grpc.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "php_grpc.h"
++extern void grpc_php_pin_self_with_nodelete(void);
+ 
+ #include "call.h"
+ #include "channel.h"
+@@ -249,7 +250,7 @@
+ 
+ /* {{{ PHP_MINIT_FUNCTION
+  */
+-PHP_MINIT_FUNCTION(grpc) {
++PHP_MINIT_FUNCTION(grpc) { grpc_php_pin_self_with_nodelete();
+   REGISTER_INI_ENTRIES();
+ 
+   /* Register call error constants */

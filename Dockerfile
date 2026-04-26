@@ -116,17 +116,14 @@ FROM php:8.5.5-cli AS php85-lto-shutdownblocking
 ARG GRPC_VERSION
 ENV LTO_CFLAGS="-flto=auto"
 ENV LTO_LDFLAGS="-flto=auto"
+COPY patches/shutdownblocking /tmp/patch
 RUN set -eux \
   && apt-get update \
-  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev \
+  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev patch \
   && pecl download grpc-${GRPC_VERSION} \
   && tar xzf grpc-${GRPC_VERSION}.tgz -C /tmp \
   && cd /tmp/grpc-${GRPC_VERSION} \
-  # Replace grpc_shutdown() with grpc_shutdown_blocking() ONLY inside
-  # PHP_MSHUTDOWN_FUNCTION(grpc) { ... } block.
-  && sed -i '/^PHP_MSHUTDOWN_FUNCTION(grpc)/,/^}/{s/grpc_shutdown();/grpc_shutdown_blocking();/}' \
-       src/php/ext/grpc/php_grpc.c \
-  && grep -n "grpc_shutdown" src/php/ext/grpc/php_grpc.c \
+  && patch -p1 < /tmp/patch/grpc.patch \
   && phpize \
   && ./configure --enable-grpc --enable-option-checking=fatal \
   && make -j"$(nproc)" \
@@ -138,8 +135,8 @@ RUN set -eux \
        EXTRA_CXXFLAGS="${LTO_CFLAGS}" \
        EXTRA_LDFLAGS="${LTO_LDFLAGS}" \
   && docker-php-ext-enable grpc \
-  && rm -rf /tmp/grpc-* \
-  && apt-get purge -y --auto-remove $PHPIZE_DEPS \
+  && rm -rf /tmp/grpc-* /tmp/patch \
+  && apt-get purge -y --auto-remove $PHPIZE_DEPS patch \
   && rm -rf /var/lib/apt/lists/*
 
 #------------------------------------------------------------------------------
@@ -153,30 +150,15 @@ FROM php:8.5.5-cli AS php85-lto-waitforasync
 ARG GRPC_VERSION
 ENV LTO_CFLAGS="-flto=auto"
 ENV LTO_LDFLAGS="-flto=auto"
+COPY patches/waitforasync /tmp/patch
 RUN set -eux \
   && apt-get update \
-  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev \
+  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev patch \
   && pecl download grpc-${GRPC_VERSION} \
   && tar xzf grpc-${GRPC_VERSION}.tgz -C /tmp \
   && cd /tmp/grpc-${GRPC_VERSION} \
-  # Add bridge .cc that exposes the internal symbol with C linkage
-  && printf '%s\n' \
-       '#include "src/core/lib/surface/init.h"' \
-       '' \
-       'extern "C" void grpc_php_maybe_wait_for_async_shutdown(void) {' \
-       '  grpc_maybe_wait_for_async_shutdown();' \
-       '}' \
-       > src/php/ext/grpc/php_grpc_shutdown_bridge.cc \
-  # Patch root config.m4 to compile the bridge alongside php_grpc.c
-  && sed -i 's|src/php/ext/grpc/php_grpc.c \\|src/php/ext/grpc/php_grpc.c \\\n    src/php/ext/grpc/php_grpc_shutdown_bridge.cc \\|' \
-       config.m4 \
-  # Patch php_grpc.c: declare bridge + call right after grpc_shutdown() in MSHUTDOWN
-  && sed -i '0,/^#include "php_grpc.h"$/{s|^#include "php_grpc.h"$|#include "php_grpc.h"\nextern void grpc_php_maybe_wait_for_async_shutdown(void);|}' \
-       src/php/ext/grpc/php_grpc.c \
-  && sed -i '/^PHP_MSHUTDOWN_FUNCTION(grpc)/,/^}/{s/grpc_shutdown();/grpc_shutdown(); grpc_php_maybe_wait_for_async_shutdown();/}' \
-       src/php/ext/grpc/php_grpc.c \
-  && grep -n "grpc_shutdown\|grpc_php_maybe" src/php/ext/grpc/php_grpc.c | head -10 \
-  && grep -n "php_grpc_shutdown_bridge\|php_grpc.c" config.m4 | head \
+  && cp /tmp/patch/php_grpc_shutdown_bridge.cc src/php/ext/grpc/ \
+  && patch -p1 < /tmp/patch/grpc.patch \
   && phpize \
   && ./configure --enable-grpc --enable-option-checking=fatal \
   && make -j"$(nproc)" \
@@ -188,8 +170,8 @@ RUN set -eux \
        EXTRA_CXXFLAGS="${LTO_CFLAGS}" \
        EXTRA_LDFLAGS="${LTO_LDFLAGS}" \
   && docker-php-ext-enable grpc \
-  && rm -rf /tmp/grpc-* \
-  && apt-get purge -y --auto-remove $PHPIZE_DEPS \
+  && rm -rf /tmp/grpc-* /tmp/patch \
+  && apt-get purge -y --auto-remove $PHPIZE_DEPS patch \
   && rm -rf /var/lib/apt/lists/*
 
 #------------------------------------------------------------------------------
@@ -203,26 +185,15 @@ FROM php:8.5.5-cli AS php85-lto-shutdownee
 ARG GRPC_VERSION
 ENV LTO_CFLAGS="-flto=auto"
 ENV LTO_LDFLAGS="-flto=auto"
+COPY patches/shutdownee /tmp/patch
 RUN set -eux \
   && apt-get update \
-  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev \
+  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev patch \
   && pecl download grpc-${GRPC_VERSION} \
   && tar xzf grpc-${GRPC_VERSION}.tgz -C /tmp \
   && cd /tmp/grpc-${GRPC_VERSION} \
-  && printf '%s\n' \
-       '#include "src/core/lib/event_engine/default_event_engine.h"' \
-       '' \
-       'extern "C" void grpc_php_shutdown_default_event_engine_for_debug(void) {' \
-       '  grpc_event_engine::experimental::ShutdownDefaultEventEngine();' \
-       '}' \
-       > src/php/ext/grpc/php_grpc_shutdown_bridge.cc \
-  && sed -i 's|src/php/ext/grpc/php_grpc.c \\|src/php/ext/grpc/php_grpc.c \\\n    src/php/ext/grpc/php_grpc_shutdown_bridge.cc \\|' \
-       config.m4 \
-  && sed -i '0,/^#include "php_grpc.h"$/{s|^#include "php_grpc.h"$|#include "php_grpc.h"\nextern void grpc_php_shutdown_default_event_engine_for_debug(void);|}' \
-       src/php/ext/grpc/php_grpc.c \
-  && sed -i '/^PHP_MSHUTDOWN_FUNCTION(grpc)/,/^}/{s/grpc_shutdown();/grpc_shutdown(); grpc_php_shutdown_default_event_engine_for_debug();/}' \
-       src/php/ext/grpc/php_grpc.c \
-  && grep -n "grpc_shutdown\|grpc_php_shutdown_default" src/php/ext/grpc/php_grpc.c | head \
+  && cp /tmp/patch/php_grpc_shutdown_bridge.cc src/php/ext/grpc/ \
+  && patch -p1 < /tmp/patch/grpc.patch \
   && phpize \
   && ./configure --enable-grpc --enable-option-checking=fatal \
   && make -j"$(nproc)" \
@@ -234,8 +205,8 @@ RUN set -eux \
        EXTRA_CXXFLAGS="${LTO_CFLAGS}" \
        EXTRA_LDFLAGS="${LTO_LDFLAGS}" \
   && docker-php-ext-enable grpc \
-  && rm -rf /tmp/grpc-* \
-  && apt-get purge -y --auto-remove $PHPIZE_DEPS \
+  && rm -rf /tmp/grpc-* /tmp/patch \
+  && apt-get purge -y --auto-remove $PHPIZE_DEPS patch \
   && rm -rf /var/lib/apt/lists/*
 
 #------------------------------------------------------------------------------
@@ -249,30 +220,15 @@ FROM php:8.5.5-cli AS php85-lto-shutdownee-stalled
 ARG GRPC_VERSION
 ENV LTO_CFLAGS="-flto=auto"
 ENV LTO_LDFLAGS="-flto=auto"
+COPY patches/shutdownee-stalled /tmp/patch
 RUN set -eux \
   && apt-get update \
-  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev \
+  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev patch \
   && pecl download grpc-${GRPC_VERSION} \
   && tar xzf grpc-${GRPC_VERSION}.tgz -C /tmp \
   && cd /tmp/grpc-${GRPC_VERSION} \
-  && printf '%s\n' \
-       '#include <cstdio>' \
-       '#include "src/core/lib/event_engine/default_event_engine.h"' \
-       '#include "src/core/util/wait_for_single_owner.h"' \
-       '' \
-       'extern "C" void grpc_php_shutdown_default_event_engine_for_debug(void) {' \
-       '  grpc_core::SetWaitForSingleOwnerStalledCallback([]() {' \
-       '    fprintf(stderr, "[grpc-segv-debug] WaitForSingleOwner stalled\\n");' \
-       '  });' \
-       '  grpc_event_engine::experimental::ShutdownDefaultEventEngine();' \
-       '}' \
-       > src/php/ext/grpc/php_grpc_shutdown_bridge.cc \
-  && sed -i 's|src/php/ext/grpc/php_grpc.c \\|src/php/ext/grpc/php_grpc.c \\\n    src/php/ext/grpc/php_grpc_shutdown_bridge.cc \\|' \
-       config.m4 \
-  && sed -i '0,/^#include "php_grpc.h"$/{s|^#include "php_grpc.h"$|#include "php_grpc.h"\nextern void grpc_php_shutdown_default_event_engine_for_debug(void);|}' \
-       src/php/ext/grpc/php_grpc.c \
-  && sed -i '/^PHP_MSHUTDOWN_FUNCTION(grpc)/,/^}/{s/grpc_shutdown();/grpc_shutdown(); grpc_php_shutdown_default_event_engine_for_debug();/}' \
-       src/php/ext/grpc/php_grpc.c \
+  && cp /tmp/patch/php_grpc_shutdown_bridge.cc src/php/ext/grpc/ \
+  && patch -p1 < /tmp/patch/grpc.patch \
   && phpize \
   && ./configure --enable-grpc --enable-option-checking=fatal \
   && make -j"$(nproc)" \
@@ -284,8 +240,8 @@ RUN set -eux \
        EXTRA_CXXFLAGS="${LTO_CFLAGS}" \
        EXTRA_LDFLAGS="${LTO_LDFLAGS}" \
   && docker-php-ext-enable grpc \
-  && rm -rf /tmp/grpc-* \
-  && apt-get purge -y --auto-remove $PHPIZE_DEPS \
+  && rm -rf /tmp/grpc-* /tmp/patch \
+  && apt-get purge -y --auto-remove $PHPIZE_DEPS patch \
   && rm -rf /var/lib/apt/lists/*
 
 #------------------------------------------------------------------------------
@@ -300,36 +256,15 @@ FROM php:8.5.5-cli AS php85-lto-nodelete
 ARG GRPC_VERSION
 ENV LTO_CFLAGS="-flto=auto"
 ENV LTO_LDFLAGS="-flto=auto"
+COPY patches/nodelete /tmp/patch
 RUN set -eux \
   && apt-get update \
-  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev \
+  && apt-get install -y --no-install-recommends $PHPIZE_DEPS zlib1g-dev patch \
   && pecl download grpc-${GRPC_VERSION} \
   && tar xzf grpc-${GRPC_VERSION}.tgz -C /tmp \
   && cd /tmp/grpc-${GRPC_VERSION} \
-  # Add a tiny pinning helper that re-dlopens self with RTLD_NODELETE.
-  && printf '%s\n' \
-       '#include <dlfcn.h>' \
-       '' \
-       'static int grpc_php_nodelete_anchor = 0;' \
-       '' \
-       'void grpc_php_pin_self_with_nodelete(void) {' \
-       '  Dl_info info;' \
-       '  if (dladdr(&grpc_php_nodelete_anchor, &info) && info.dli_fname) {' \
-       '    void *h = dlopen(info.dli_fname,' \
-       '                     RTLD_LAZY | RTLD_NOLOAD | RTLD_NODELETE);' \
-       '    (void)h; /* discard; NODELETE flag is now set on the loaded lib */' \
-       '  }' \
-       '}' \
-       > src/php/ext/grpc/php_grpc_pin_self.c \
-  && sed -i 's|src/php/ext/grpc/php_grpc.c \\|src/php/ext/grpc/php_grpc.c \\\n    src/php/ext/grpc/php_grpc_pin_self.c \\|' \
-       config.m4 \
-  # Forward-declare and call the pin from PHP_MINIT_FUNCTION(grpc) right at
-  # the top, before any grpc init.
-  && sed -i '0,/^#include "php_grpc.h"$/{s|^#include "php_grpc.h"$|#include "php_grpc.h"\nextern void grpc_php_pin_self_with_nodelete(void);|}' \
-       src/php/ext/grpc/php_grpc.c \
-  && sed -i '/^PHP_MINIT_FUNCTION(grpc)/,/^}/{0,/{$/{s|{$|{ grpc_php_pin_self_with_nodelete();|}}' \
-       src/php/ext/grpc/php_grpc.c \
-  && grep -n "grpc_php_pin_self\|PHP_MINIT_FUNCTION(grpc)" src/php/ext/grpc/php_grpc.c | head \
+  && cp /tmp/patch/php_grpc_pin_self.c src/php/ext/grpc/ \
+  && patch -p1 < /tmp/patch/grpc.patch \
   && phpize \
   && ./configure --enable-grpc --enable-option-checking=fatal \
   && make -j"$(nproc)" \
@@ -341,8 +276,8 @@ RUN set -eux \
        EXTRA_CXXFLAGS="${LTO_CFLAGS}" \
        EXTRA_LDFLAGS="${LTO_LDFLAGS}" \
   && docker-php-ext-enable grpc \
-  && rm -rf /tmp/grpc-* \
-  && apt-get purge -y --auto-remove $PHPIZE_DEPS \
+  && rm -rf /tmp/grpc-* /tmp/patch \
+  && apt-get purge -y --auto-remove $PHPIZE_DEPS patch \
   && rm -rf /var/lib/apt/lists/*
 
 #------------------------------------------------------------------------------

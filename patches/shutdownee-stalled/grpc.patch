@@ -1,0 +1,29 @@
+--- a/config.m4
++++ b/config.m4
+@@ -981,6 +981,7 @@
+     src/php/ext/grpc/channel_credentials.c \
+     src/php/ext/grpc/completion_queue.c \
+     src/php/ext/grpc/php_grpc.c \
++    src/php/ext/grpc/php_grpc_shutdown_bridge.cc \
+     src/php/ext/grpc/server.c \
+     src/php/ext/grpc/server_credentials.c \
+     src/php/ext/grpc/timeval.c \
+--- a/src/php/ext/grpc/php_grpc.c
++++ b/src/php/ext/grpc/php_grpc.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include "php_grpc.h"
++extern void grpc_php_shutdown_default_event_engine_for_debug(void);
+ 
+ #include "call.h"
+ #include "channel.h"
+@@ -538,7 +539,7 @@
+     zend_hash_destroy(&grpc_target_upper_bound_map);
+     grpc_shutdown_timeval(TSRMLS_C);
+     grpc_php_shutdown_completion_queue(TSRMLS_C);
+-    grpc_shutdown();
++    grpc_shutdown(); grpc_php_shutdown_default_event_engine_for_debug();
+     GRPC_G(initialized) = 0;
+   }
+   return SUCCESS;
